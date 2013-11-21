@@ -228,6 +228,104 @@ function ptadn_conf_tabs( $current = 'post' ) {
 
 }
 
+function ptadn_get_subscribe_code_for_id( $id ) {
+	return '<a href=\'http://alpha.app.net/intent/subscribe/?channel_id='.$id.'\' class=\'adn-button\' target=\'_blank\' data-type=\'subscribe\' data-width="144" data-height="22" data-channel-id="'.$id.'">Subscribe on App.net</a><script>(function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0];if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=\'//d2zh9g63fcvyrq.cloudfront.net/adn.js\';fjs.parentNode.insertBefore(js,fjs);}}(document, \'script\', \'adn-button-js\'));</script>';
+}
+
+function get_broadcast_channels() {
+	$broadcast_channels = get_transient( 'broadcast_channels' );
+
+	if ( empty( $broadcast_channels ) ){
+
+		$json = ptadn_api_call( 'users/me/channels', array( 'channel_types' => 'net.app.core.broadcast', 'count' => 200, 'include_annotations' => 1 ) );
+
+		if ( $json->meta->code == 200 ) {
+			if ( count( $json->data ) != 0 ) {
+				$broadcast_channels = array();
+
+				foreach ( $json->data as $channel ) {
+
+					$broadcast_channels[$channel->id] = array(
+						'readers' => count( $channel->readers->user_ids )
+					);
+
+					foreach ( $channel->annotations as $annotation ) {
+
+						if ( $annotation->type == 'net.app.core.broadcast.metadata' ) {
+
+							$broadcast_channels[$channel->id]['title'] = $annotation->value->title;
+							$broadcast_channels[$channel->id]['description'] = $annotation->value->description;
+
+						}
+					}
+				}
+
+			   set_transient('broadcast_channels', $broadcast_channels, 60 * 5 );  // Lets cache these for 5 minutes
+			}
+		}
+
+	}
+	return $broadcast_channels;
+}
+
+
+class PTADN_Subscribe_Widget extends WP_Widget {
+
+	function __construct() {
+		$widget_ops = array( 'description' => __('Adds a subscribe button for an App.net Broadcast channel.') );
+		parent::__construct( 'channel_id', __('App.net Subscribe Button'), $widget_ops );
+	}
+
+	function widget($args, $instance) {
+		extract($args);
+		echo $before_widget;
+		echo $before_title . 'Subscribe' . $after_title;
+
+		$channel_def = json_decode(base64_decode($instance['channel_id']));
+		echo '<p>Subscribe to the ' . htmlspecialchars($channel_def->title) . ' Broadcast channel to get real-time push notifications for free.</p>';
+		echo ptadn_get_subscribe_code_for_id($channel_def->id);
+		echo $after_widget;
+	}
+
+	function update( $new_instance, $old_instance ) {
+		$instance = $old_instance;
+		$instance['channel_id'] = $new_instance['channel_id'];
+		return $instance;
+	}
+
+	function form( $instance ) {
+		$instance = wp_parse_args( (array) $instance, array( 'channel_id' => '' ) );
+		$channel_id = isset( $instance['channel_id'] ) ? $instance['channel_id'] : '';
+		// Get channels
+		$broadcast_channels = get_broadcast_channels();
+
+		// If no menus exists, direct the user to go and create some.
+		if ( empty($broadcast_channels) ) {
+			echo '<p>'. sprintf( __('You haven\'t created any broadcast channels yet. <a href="%s">Create some</a>.'), admin_url('options-general.php?page=ptadn&tab=broadcast') ) .'</p>';
+			return;
+		}
+		?>
+		<p>
+			<label for="<?php echo $this->get_field_id('channel_id'); ?>"><?php _e('Select Menu:'); ?></label>
+			<select id="<?php echo $this->get_field_id('channel_id'); ?>" name="<?php echo $this->get_field_name('channel_id'); ?>">
+		<?php
+			foreach ( $broadcast_channels as $id => $channel ) {
+				$channel_def = base64_encode(json_encode(array("id" => $id, "title" => $channel['title'])));
+				echo '<option value="' . $channel_def . '"'
+					. selected( $channel_id, $channel_def, false )
+					. '>'. $channel['title'] . '</option>';
+			}
+		?>
+			</select>
+		</p>
+		<?php
+	}
+}
+
+add_action('widgets_init', function () {
+	register_widget( 'PTADN_Subscribe_Widget' );
+});
+
 // PtADN Settings
 function ptadn_conf() {
 
@@ -451,14 +549,13 @@ function ptadn_conf() {
 					'value' => array(
 						'title' => $_POST['ptadn_title'],
 						'description' => $_POST['ptadn_description'],
-						'fallback_url' => $_POST['ptadn_url'],
 					)
 				),
 			)
 		);
 
 		ptadn_api_call( 'channels', array(), 'POST', json_encode( $jsonContent ) );
-
+		delete_transient( 'broadcast_channels' );
 		$updated = true;
 
 	} elseif ( isset( $_POST['check-channels'] ) ) {
@@ -482,7 +579,6 @@ function ptadn_conf() {
 		}
 
 		update_option( 'ptadn', $options );
-
 		$updated = true;
 
 	}
@@ -716,66 +812,35 @@ function ptadn_conf() {
 			echo '<h3>Your channels</h3>';
 
 			echo '<form action="'.admin_url( 'options-general.php?page=' . PTADN_SLUG ).'&amp;tab='.$tab.'" method="post">';
+			$broadcast_channels = get_broadcast_channels();
+			if ( count( $broadcast_channels ) == 0 ) {
 
-			$json = ptadn_api_call( 'users/me/channels', array( 'channel_types' => 'net.app.core.broadcast', 'count' => 200, 'include_annotations' => 1 ) );
-
-			if ( $json->meta->code == 403 ) {
-
-				echo '<p>'.$json->meta->error_message.'</p>';
-
-				echo '<p>Click on "Disconnect from App.net" on the right and connect it again to authorize the new scopes.</p>';
+				echo '<p>You don\'t own any broadcast channel.</p>';
 
 			} else {
 
-				if ( count( $json->data ) == 0 ) {
+				echo '<ul>';
 
-					echo '<p>You don\'t own any broadcast channel.</p>';
+				foreach ( $broadcast_channels as $id => $channel ) {
 
-				} else {
+					echo '<li style="background: #ececec; padding: 10px; margin-bottom: 10px; width: 650px;">';
+					echo '<input type="checkbox" name="ptadn_channels[]" value="'.$id.'" id="channel-'.$id.'" style="margin-right: 15px;"';
+					echo intval( isset( $options['ptadn_channels'][$id] ) ) === 1 ? ' checked="checked"' : '';
+					echo '>';
+					echo '<label for="channel-'.$id.'"><strong>' . htmlspecialchars($channel['title']) .'</strong> — ' .  htmlspecialchars($channel['description']) . ' — <a href="javascript:;" onclick="document.getElementById(\'code-'.$id.'\').style.display=\'block\';">Show subscribe button code</a></label><br />';
 
-					$channels = array();
+					echo '<input id="code-'.$id.'" type="text" style="display: none; margin-left: 25px; margin-top: 5px; width: 350px;" value="'.htmlspecialchars( ptadn_get_subscribe_code_for_id( $id ) ).'">';
 
-					foreach ( $json->data as $channel ) {
-
-						$channels[$channel->id] = array(
-							'readers' => count( $channel->readers->user_ids )
-						);
-
-						foreach ( $channel->annotations as $annotation ) {
-
-							if ( $annotation->type == 'net.app.core.broadcast.metadata' ) {
-
-								$channels[$channel->id]['title'] = $annotation->value->title;
-								$channels[$channel->id]['description'] = $annotation->value->description;
-								$channels[$channel->id]['url'] = $annotation->value->fallback_url;
-
-							}
-						}
-					}
-
-					echo '<ul>';
-
-					foreach ( $channels as $id => $channel ) {
-
-						echo '<li style="background: #ececec; padding: 10px; margin-bottom: 10px; width: 650px;">';
-						echo '<input type="checkbox" name="ptadn_channels[]" value="'.$id.'" id="channel-'.$id.'" style="margin-right: 15px;"';
-						echo intval( isset( $options['ptadn_channels'][$id] ) ) === 1 ? ' checked="checked"' : '';
-						echo '>';
-						echo '<label for="channel-'.$id.'"><strong>' . $channel['title'] .'</strong> — ' . $channel['description'] . ' — <a href="javascript:;" onclick="document.getElementById(\'code-'.$id.'\').style.display=\'block\';">Show subscribe button code</a></label><br />';
-
-						echo '<input id="code-'.$id.'" type="text" style="display: none; margin-left: 25px; margin-top: 5px; width: 350px;" value="'.htmlspecialchars( '<a href=\'http://alpha.app.net/intent/subscribe/?channel_id=25222\' class=\'adn-button\' target=\'_blank\' data-type=\'subscribe\' data-width="144" data-height="22" data-channel-id="25222">Subscribe on App.net</a><script>(function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0];if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=\'//d2zh9g63fcvyrq.cloudfront.net/adn.js\';fjs.parentNode.insertBefore(js,fjs);}}(document, \'script\', \'adn-button-js\'));</script>' ).'">';
-
-						echo '</li>';
-
-					}
-
-					echo '</ul>';
-
-					echo '<p class="submit" style="text-align: left">';
-					wp_nonce_field( 'ptadn', 'ptadn-channel' );
-					echo '<input type="submit" class="button-primary" name="check-channels" value="'.__( 'Save' ).' &raquo;" /></p></form>';
+					echo '</li>';
 
 				}
+
+				echo '</ul>';
+
+				echo '<p class="submit" style="text-align: left">';
+				wp_nonce_field( 'ptadn', 'ptadn-channel' );
+				echo '<input type="submit" class="button-primary" name="check-channels" value="'.__( 'Save' ).' &raquo;" /></p></form>';
+
 			}
 
 			echo '<h3>Create a new channel</h3>';
@@ -785,8 +850,6 @@ function ptadn_conf() {
 			echo '<p>Channel title: <input type="text" style="width: 250px;" name="ptadn_title" value="'.get_bloginfo( 'name' ).'" /></p>';
 
 			echo '<p>Channel description: <input type="text" style="width: 450px;" name="ptadn_description" value="'.get_bloginfo( 'description' ).'" /></p>';
-
-			echo '<p>Channel URL: <input type="text" style="width: 450px;" name="ptadn_url" value="'.get_site_url().'" /></p>';
 
 			echo '<p>You can specify another URL than your website if you want your readers to have a more specific page about the channel.</p>';
 
