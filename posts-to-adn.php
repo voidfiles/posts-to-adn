@@ -228,8 +228,9 @@ function ptadn_conf_tabs( $current = 'post' ) {
 
 }
 
-function ptadn_get_subscribe_code_for_id( $id ) {
-	return '<a href=\'http://alpha.app.net/intent/subscribe/?channel_id='.$id.'\' class=\'adn-button\' target=\'_blank\' data-type=\'subscribe\' data-width="144" data-height="22" data-channel-id="'.$id.'">Subscribe on App.net</a><script>(function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0];if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=\'//d2zh9g63fcvyrq.cloudfront.net/adn.js\';fjs.parentNode.insertBefore(js,fjs);}}(document, \'script\', \'adn-button-js\'));</script>';
+function ptadn_get_subscribe_code_for_id( $id, $size = 11 , $width = 144) {
+	$height = $size * 2;
+	return '<a href=\'http://alpha.app.net/intent/subscribe/?channel_id='.$id.'\' class=\'adn-button\' target=\'_blank\' data-type=\'subscribe\' data-width="'. $width .'" data-height="'. $height .'" data-size="'. $size .'" data-channel-id="'.$id.'">Subscribe on App.net</a><script>(function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0];if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=\'//d2zh9g63fcvyrq.cloudfront.net/adn.js\';fjs.parentNode.insertBefore(js,fjs);}}(document, \'script\', \'adn-button-js\'));</script>';
 }
 
 function get_broadcast_channels() {
@@ -237,7 +238,14 @@ function get_broadcast_channels() {
 
 	if ( empty( $broadcast_channels ) ){
 
-		$json = ptadn_api_call( 'users/me/channels', array( 'channel_types' => 'net.app.core.broadcast', 'count' => 200, 'include_annotations' => 1 ) );
+		$json = ptadn_api_call( 'channels/search', array(
+			'channel_types' => 'net.app.core.broadcast',
+			'order' => 'id',
+			'count' => 200,
+			'include_annotations' => 1,
+			'include_channel_annotations' => 1,
+			'is_editable' => 1,
+		));
 
 		if ( $json->meta->code == 200 ) {
 			if ( count( $json->data ) != 0 ) {
@@ -260,12 +268,30 @@ function get_broadcast_channels() {
 					}
 				}
 
-			   set_transient('broadcast_channels', $broadcast_channels, 60 * 5 );  // Lets cache these for 5 minutes
+				set_transient('broadcast_channels', $broadcast_channels, 60 * 5 );  // Lets cache these for 5 minutes
 			}
 		}
 
 	}
 	return $broadcast_channels;
+}
+
+function get_broadcast_channel($channel_id) {
+	$cache_string = 'broadcast_channels_' . $channel_id;
+
+	$broadcast_channel = get_transient( $cache_string );
+
+	if ( empty( $broadcast_channel ) ){
+		$json = ptadn_api_call( 'channels/' . $channel_id, array( 'include_annotations' => 1) );
+		if ( $json->meta->code == 200 ) {
+
+			$broadcast_channel = $json->data;
+
+		  	set_transient($cache_string, $broadcast_channel, 60 * 60 * 24 );  // Lets cache these for 24 hours
+		}
+	}
+
+	return $broadcast_channel;
 }
 
 
@@ -1484,3 +1510,80 @@ function ptadn_meta( $type, $context ) {
 }
 
 add_action( 'do_meta_boxes', 'ptadn_meta', 20, 2 );
+
+// [channel-subscribe channel_id="1"]
+function adn_channel_display_func( $atts ) {
+	$channel_id = $atts['channel_id'];
+	$broadcast_channel = get_broadcast_channel($channel_id);
+	if (!$broadcast_channel) {
+		return 'Channel doesn\'t exsist';
+	}
+
+	$channel_title = '';
+	$channel_description = '';
+	$channel_icon = '';
+	$freq = '';
+	$url = '';
+	foreach ( $broadcast_channel->annotations as $annotation ) {
+		if ( $annotation->type == 'net.app.core.broadcast.metadata' ) {
+
+			$channel_title = $annotation->value->title;
+			$channel_description = $annotation->value->description;
+
+		}
+
+		if ( $annotation->type == 'net.app.core.broadcast.icon' && property_exists($annotation, 'value')) {
+			$channel_icon = $annotation->value->url;
+		}
+
+		if ( $annotation->type == 'net.app.core.broadcast.freq' && property_exists($annotation, 'value')) {
+			$freq = $annotation->value->avg_freq;
+		}
+
+		if ( $annotation->type == 'net.app.core.fallback_url' && property_exists($annotation, 'value')) {
+			$url = $annotation->value->url;
+		}
+
+	}
+	if ($channel_icon == '') {
+		$channel_icon = $broadcast_channel->owner->avatar_image->url;
+	}
+	$channel_img = '';
+	if ($channel_icon != '') {
+		$channel_img = '<img src="' . $channel_icon . '" width=80 height=80>';
+	}
+	ob_start();
+	?>
+	<div class='adn-broadcast-channel'>
+		<div class='adn-channel-display'>
+			<?PHP if ($channel_icon) { ?>
+			<img src='<?PHP echo $channel_icon; ?>' width='100' height='100' align='left'>
+			<?PHP } ?>
+			<p>
+				<a href='<?PHP echo $url; ?>'><?PHP echo $channel_title; ?></a><br>
+				<small><?PHP echo $freq; ?></small><br>
+				<?PHP echo $channel_description; ?>
+			</p>
+		</div>
+		<div class='adn-channel-subscribe-display'>
+			<span>Never miss important news again</span>
+			<?PHP echo ptadn_get_subscribe_code_for_id($channel_id, 14, 182) ?>
+		</div>
+	</div>
+	<?
+	return ob_get_clean();
+}
+
+add_shortcode( 'adn-channel', 'adn_channel_display_func' );
+
+function register_style () {
+    wp_register_style( 'posts_to_adn_style', plugins_url('/style.css', __FILE__), false, '1.0.0', 'all');
+}
+
+add_action('init', 'register_style');
+
+function enqueue_style () {
+   wp_enqueue_style( 'posts_to_adn_style' );
+}
+
+add_action('wp_enqueue_scripts', 'enqueue_style');

@@ -24,6 +24,7 @@ Current features:
 * Per-post customization
 * Publish old posts with the box in the compose view
 * App.net Broadcast Channels support
+* Shortcode for displaying broadcast channels [adn-channel channel_id=35631]
 
 I'm open to suggestions.
 

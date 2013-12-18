@@ -1,0 +1,40 @@
+.adn-broadcast-channel {
+	border: 1px solid #ddd;
+}
+
+.adn-broadcast-channel .adn-channel-display {
+	padding: 10px;
+}
+
+.adn-broadcast-channel .adn-channel-display a {
+	font-size: 16px;
+}
+
+.adn-broadcast-channel .adn-channel-display img {
+	margin-right: 10px;
+}
+
+.adn-broadcast-channel .adn-channel-display p {
+	margin-bottom: 10px;
+}
+
+.adn-broadcast-channel .adn-channel-subscribe-display {
+	padding: 14px 10px 6px 10px;
+	border-top: 1px solid #ddd;
+	background-color: #f0f0f0;
+	text-align: center;
+}
+
+.adn-broadcast-channel .adn-channel-subscribe-display span {
+	font-family: "Montserrat","Helvetica Neue",Helvetica,Arial,sans-serif;
+	line-height: normal;
+	font-size: 18px;
+	position: relative;
+	top: -9px;
+}
+
+.adn-broadcast-channel .adn-channel-subscribe-display iframe {
+	display: inline-block;
+	margin: 0;
+
+}
